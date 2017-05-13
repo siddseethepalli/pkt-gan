@@ -174,30 +174,20 @@ def exploit():
         loss=[modified_binary_crossentropy, 'sparse_categorical_crossentropy']
     )
 
-    # get our mnist data, and force it to be of shape (..., 1, 28, 28) with
-    # range [-1, 1]
-    (X_train, y_train), (X_test, y_test) = mnist.load_data()
-    X_train = (X_train.astype(np.float32) - 127.5) / 127.5
-    X_train = np.expand_dims(X_train, axis=1)
-
-    X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-    X_test = np.expand_dims(X_test, axis=1)
-
-    nb_train, nb_test = X_train.shape[0], X_test.shape[0]
+    nb_train = 10000
 
     train_history = defaultdict(list)
-    test_history = defaultdict(list)
 
     for epoch in range(nb_epochs):
         print('Epoch {} of {}'.format(epoch + 1, nb_epochs))
 
-        nb_batches = int(X_train.shape[0] / batch_size)
+        nb_batches = int(nb_train / batch_size)
         progress_bar = Progbar(target=nb_batches)
 
         epoch_gen_loss = []
 
         for index in range(nb_batches):
-            if len(epoch_gen_loss) > 1:
+            if len(epoch_gen_loss) >= 1:
                 progress_bar.update(index, values=[('gen_loss', np.mean(np.array(epoch_gen_loss),axis=0)[0])])
             else:
                 progress_bar.update(index)
@@ -213,57 +203,11 @@ def exploit():
             epoch_gen_loss.append(combined.train_on_batch(
                 [noise, sampled_labels.reshape((-1, 1))], [trick, sampled_labels]))
 
-        print('\nTesting for epoch {}:'.format(epoch + 1))
-
-        # evaluate the testing loss here
-
-        # generate a new batch of noise
-        #noise = np.random.uniform(-1, 1, (nb_test, latent_size))
-        noise = np.random.normal(0, 1, (nb_test, latent_size))
-
-        # sample some labels from p_c and generate images from them
-        sampled_labels = np.random.randint(0, 10, nb_test)
-        generated_images = generator.predict(
-            [noise, sampled_labels.reshape((-1, 1))], verbose=False)
-
-        X = np.concatenate((X_test, generated_images))
-        y = np.array([1] * nb_test + [0] * nb_test)
-        aux_y = np.concatenate((y_test, sampled_labels), axis=0)
-
-        # see if the discriminator can figure itself out...
-        discriminator_test_loss = discriminator.evaluate(
-            X, [y, aux_y], verbose=False)
-
-        # make new noise
-        #noise = np.random.uniform(-1, 1, (2 * nb_test, latent_size))
-        noise = np.random.normal(0, 1, (2 * nb_test, latent_size))
-        sampled_labels = np.random.randint(0, 10, 2 * nb_test)
-
-        trick = np.ones(2 * nb_test)
-
-        generator_test_loss = combined.evaluate(
-            [noise, sampled_labels.reshape((-1, 1))],
-            [trick, sampled_labels], verbose=False)
-
         generator_train_loss = np.mean(np.array(epoch_gen_loss), axis=0)
 
         # generate an epoch report on performance
         train_history['generator'].append(generator_train_loss)
 
-        test_history['generator'].append(generator_test_loss)
-        test_history['discriminator'].append(discriminator_test_loss)
-
-        print('{0:<22s} | {1:4s} | {2:15s} | {3:5s}'.format(
-            'component', *discriminator.metrics_names))
-        print('-' * 65)
-
-        ROW_FMT = '{0:<22s} | {1:<4.2f} | {2:<15.2f} | {3:<5.2f}'
-        print(ROW_FMT.format('generator (train)',
-                             *train_history['generator'][-1]))
-        print(ROW_FMT.format('generator (test)',
-                             *test_history['generator'][-1]))
-        print(ROW_FMT.format('discriminator (test)',
-                             *test_history['discriminator'][-1]))
         # save weights every epoch
         generator.save_weights(
             'params_generator_exploit_epoch_{0:03d}.hdf5'.format(epoch), True)
@@ -288,7 +232,7 @@ def exploit():
         Image.fromarray(img).save(
             'plot_epoch_{0:03d}_generated.png'.format(epoch))
 
-    pickle.dump({'train': train_history, 'test': test_history},
+    pickle.dump({'train': train_history},
                 open('acgan-exploit-history.pkl', 'wb'))
 
 def train():
