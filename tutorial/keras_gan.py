@@ -60,7 +60,7 @@ def combine_images(generated_images):
     num = generated_images.shape[0]
     width = int(math.sqrt(num))
     height = int(math.ceil(float(num)/width))
-    shape = generated_images.shape[2:]
+    shape = generated_images.shape[1:]
     image = np.zeros((height*shape[0], width*shape[1]),
                      dtype=generated_images.dtype)
     for index, img in enumerate(generated_images):
@@ -95,7 +95,8 @@ def train(BATCH_SIZE):
                 noise[i, :] = np.random.uniform(-1, 1, 100)
             image_batch = X_train[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
             generated_images = generator.predict(noise, verbose=0)
-            if index % 20 == 0:
+            print(generated_images.shape)
+            if index % 500 == 0:
                 image = combine_images(generated_images)
                 image = image*127.5+127.5
                 Image.fromarray(image.astype(np.uint8)).save(
@@ -111,7 +112,7 @@ def train(BATCH_SIZE):
                 noise, [1] * BATCH_SIZE)
             discriminator.trainable = True
             print("batch %d g_loss : %f" % (index, g_loss))
-            if index % 10 == 9:
+            if index % 500 == 0:
                 generator.save_weights('generator', True)
                 discriminator.save_weights('discriminator', True)
 
