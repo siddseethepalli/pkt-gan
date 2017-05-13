@@ -234,8 +234,6 @@ def exploit():
         discriminator_test_loss = discriminator.evaluate(
             X, [y, aux_y], verbose=False)
 
-        discriminator_train_loss = np.mean(np.array(epoch_disc_loss), axis=0)
-
         # make new noise
         #noise = np.random.uniform(-1, 1, (2 * nb_test, latent_size))
         noise = np.random.normal(0, 1, (2 * nb_test, latent_size))
@@ -251,7 +249,6 @@ def exploit():
 
         # generate an epoch report on performance
         train_history['generator'].append(generator_train_loss)
-        train_history['discriminator'].append(discriminator_train_loss)
 
         test_history['generator'].append(generator_test_loss)
         test_history['discriminator'].append(discriminator_test_loss)
@@ -265,8 +262,6 @@ def exploit():
                              *train_history['generator'][-1]))
         print(ROW_FMT.format('generator (test)',
                              *test_history['generator'][-1]))
-        print(ROW_FMT.format('discriminator (train)',
-                             *train_history['discriminator'][-1]))
         print(ROW_FMT.format('discriminator (test)',
                              *test_history['discriminator'][-1]))
         # save weights every epoch
