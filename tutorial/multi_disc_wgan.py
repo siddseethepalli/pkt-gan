@@ -190,40 +190,6 @@ def train():
         print('disc_loss: {} gen_loss: {}'.format(disc_loss, gen_loss))
 
         if batch % 100 == 99:
-            print('\nTesting for batch {}:'.format(batch))
-
-            noise = np.random.normal(0, 1, (nb_test, latent_size))
-            sampled_labels = np.random.randint(0, 10, nb_test)
-            generated_images = generator.predict(
-                [noise, sampled_labels.reshape((-1, 1))], verbose=False)
-
-            X = np.concatenate((X_test, generated_images))
-            y = np.array([-1] * nb_test + [1] * nb_test)
-            aux_y = np.concatenate((y_test, sampled_labels), axis=0)
-
-            discriminator_test_loss = discriminator.evaluate(
-                X, [y, aux_y], verbose=False)
-
-            noise = np.random.normal(0, 1, (2 * nb_test, latent_size))
-            sampled_labels = np.random.randint(0, 10, 2 * nb_test)
-            trick = -np.ones(2 * nb_test)
-
-            generator_test_loss = combined.evaluate(
-                [noise, sampled_labels.reshape((-1, 1))],
-                [trick, sampled_labels], verbose=False)
-
-            test_history['generator'].append(generator_test_loss)
-            test_history['discriminator'].append(discriminator_test_loss)
-
-            print('{0:<22s} | {1:4s} | {2:15s} | {3:5s}'.format(
-                'component', *discriminator.metrics_names))
-            print('-' * 65)
-            ROW_FMT = '{0:<22s} | {1:<4.2f} | {2:<15.2f} | {3:<5.2f}'
-            print(ROW_FMT.format('generator (test)',
-                                 *test_history['generator'][-1]))
-            print(ROW_FMT.format('discriminator (test)',
-                                 *test_history['discriminator'][-1]))
-
             generator.save_weights(
                 'params_generator_batch_{0:06d}.hdf5'.format(batch), True)
             discriminator.save_weights(
@@ -242,8 +208,6 @@ def train():
                                    ], axis=-1) * 127.5 + 127.5).astype(np.uint8)
             Image.fromarray(img).save(
                 'plot_batch_{0:06d}_generated.png'.format(batch))
-
-    pickle.dump({'test': test_history}, open('acgan-history.pkl', 'wb'))
 
 
 if __name__ == '__main__':
