@@ -1,12 +1,16 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from __future__ import print_function
+
 from collections import defaultdict
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
 from PIL import Image
+
 from six.moves import range
-import argparse
+
 import keras.backend as K
 from keras.datasets import mnist
 from keras.layers import Input, Dense, Reshape, Flatten, Embedding, merge, Dropout
@@ -19,8 +23,8 @@ from keras.backend.common import _EPSILON
 from keras.utils.generic_utils import Progbar
 import numpy as np
 
-K.set_image_dim_ordering('th')
 np.random.seed(1331)
+K.set_image_dim_ordering('th')
 
 def modified_binary_crossentropy(target, output):
     return K.mean(target*output)
@@ -101,15 +105,15 @@ def build_discriminator():
     # thinks the image that is being shown is fake, and the second output
     # (name=auxiliary) is the class that the discriminator thinks the image
     # belongs to.
-    fake = Dense(1, activation='tanh', name='generation')(features)
+    fake = Dense(1, activation='linear', name='generation')(features)
     aux = Dense(10, activation='softmax', name='auxiliary')(features)
 
     return Model(input=image, output=[fake, aux])
 
 def train():
     # batch and latent size taken from the paper
-    nb_epochs = 50
-    batch_size = 100
+    nb_batches = 1000000
+    batch_size = 128
     latent_size = 100
 
     # Adam parameters suggested in https://arxiv.org/abs/1511.06434
@@ -123,6 +127,7 @@ def train():
         loss=[modified_binary_crossentropy, 'sparse_categorical_crossentropy']
     )
 
+    # build the generator
     generator = build_generator(latent_size)
     generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
                       loss='binary_crossentropy')
@@ -133,6 +138,7 @@ def train():
     # get a fake image
     fake = generator([latent, image_class])
 
+    # we only want to be able to train generation for the combined model
     discriminator.trainable = False
     fake, aux = discriminator(fake)
     combined = Model(input=[latent, image_class], output=[fake, aux])
@@ -142,6 +148,8 @@ def train():
         loss=[modified_binary_crossentropy, 'sparse_categorical_crossentropy']
     )
 
+    # get our mnist data, and force it to be of shape (..., 1, 28, 28) with
+    # range [-1, 1]
     (X_train, y_train), (X_test, y_test) = mnist.load_data()
     X_train = (X_train.astype(np.float32) - 127.5) / 127.5
     X_train = np.expand_dims(X_train, axis=1)
@@ -154,106 +162,89 @@ def train():
     train_history = defaultdict(list)
     test_history = defaultdict(list)
 
-    for epoch in range(nb_epochs):
-        print('Epoch {} of {}'.format(epoch, nb_epochs))
+    for batch in range(nb_batches):
+        print('Batch {} of {}'.format(batch, nb_batches))
 
-        nb_batches = int(X_train.shape[0] / batch_size)
-        progress_bar = Progbar(target=nb_batches)
+        idx = np.random.randint(X_train.shape[0] - batch_size)
+        image_batch = X_train[idx: idx + batch_size]
+        label_batch = y_train[idx: idx + batch_size]
 
-        epoch_gen_loss = []
-        epoch_disc_loss = []
+        noise = np.random.normal(0, 1, (batch_size, latent_size))
+        sampled_labels = np.random.randint(0, 10, batch_size)
+        generated_images = generator.predict(
+            [noise, sampled_labels.reshape((-1, 1))], verbose=0)
 
-        for index in range(nb_batches):
-            if len(epoch_gen_loss) + len(epoch_disc_loss) > 1:
-                progress_bar.update(
-                    index, values=[
-                        ('disc_loss',np.mean(np.array(epoch_disc_loss),axis=0)[0]),
-                        ('gen_loss', np.mean(np.array(epoch_gen_loss),axis=0)[0])
-                    ])
-            else:
-                progress_bar.update(index)
+        X = np.concatenate((image_batch, generated_images))
+        y = np.array([-1] * batch_size + [1] * batch_size)
+        aux_y = np.concatenate((label_batch, sampled_labels), axis=0)
 
-            image_batch = X_train[index * batch_size:(index + 1) * batch_size]
-            label_batch = y_train[index * batch_size:(index + 1) * batch_size]
+        disc_loss = discriminator.train_on_batch(X, [y, aux_y])
 
-            noise = np.random.normal(0, 1, (batch_size, latent_size))
-            sampled_labels = np.random.randint(0, 10, batch_size)
+        noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
+        sampled_labels = np.random.randint(0, 10, 2 * batch_size)
+        trick = -np.ones(2 * batch_size)
+
+        gen_loss = combined.train_on_batch(
+            [noise, sampled_labels.reshape((-1, 1))], [trick, sampled_labels])
+
+        print('disc_loss: {} gen_loss: {}'.format(disc_loss, gen_loss))
+
+        if batch % 100 == 99:
+            print('\nTesting for batch {}:'.format(batch))
+
+            noise = np.random.normal(0, 1, (nb_test, latent_size))
+            sampled_labels = np.random.randint(0, 10, nb_test)
             generated_images = generator.predict(
-                [noise, sampled_labels.reshape((-1, 1))], verbose=0)
+                [noise, sampled_labels.reshape((-1, 1))], verbose=False)
 
-            X = np.concatenate((image_batch, generated_images))
-            y = np.array([1] * batch_size + [-1] * batch_size)
-            aux_y = np.concatenate((label_batch, sampled_labels), axis=0)
+            X = np.concatenate((X_test, generated_images))
+            y = np.array([-1] * nb_test + [1] * nb_test)
+            aux_y = np.concatenate((y_test, sampled_labels), axis=0)
 
-            epoch_disc_loss.append(discriminator.train_on_batch(X, [y, aux_y]))
+            discriminator_test_loss = discriminator.evaluate(
+                X, [y, aux_y], verbose=False)
 
-            noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
-            sampled_labels = np.random.randint(0, 10, 2 * batch_size)
-            trick = np.ones(2 * batch_size)
+            noise = np.random.normal(0, 1, (2 * nb_test, latent_size))
+            sampled_labels = np.random.randint(0, 10, 2 * nb_test)
+            trick = -np.ones(2 * nb_test)
 
-            epoch_gen_loss.append(combined.train_on_batch(
-                [noise, sampled_labels.reshape((-1, 1))], [trick, sampled_labels]))
+            generator_test_loss = combined.evaluate(
+                [noise, sampled_labels.reshape((-1, 1))],
+                [trick, sampled_labels], verbose=False)
 
-        print('\nTesting for epoch {}:'.format(epoch + 1))
+            test_history['generator'].append(generator_test_loss)
+            test_history['discriminator'].append(discriminator_test_loss)
 
-        noise = np.random.normal(0, 1, (nb_test, latent_size))
-        sampled_labels = np.random.randint(0, 10, nb_test)
-        generated_images = generator.predict(
-            [noise, sampled_labels.reshape((-1, 1))], verbose=False)
+            print('{0:<22s} | {1:4s} | {2:15s} | {3:5s}'.format(
+                'component', *discriminator.metrics_names))
+            print('-' * 65)
+            ROW_FMT = '{0:<22s} | {1:<4.2f} | {2:<15.2f} | {3:<5.2f}'
+            print(ROW_FMT.format('generator (test)',
+                                 *test_history['generator'][-1]))
+            print(ROW_FMT.format('discriminator (test)',
+                                 *test_history['discriminator'][-1]))
 
-        X = np.concatenate((X_test, generated_images))
-        y = np.array([1] * nb_test + [-1] * nb_test)
-        aux_y = np.concatenate((y_test, sampled_labels), axis=0)
+            generator.save_weights(
+                'params_generator_batch_{0:06d}.hdf5'.format(batch), True)
+            discriminator.save_weights(
+                'params_discriminator_batch_{0:06d}.hdf5'.format(batch), True)
 
-        discriminator_test_loss = discriminator.evaluate(
-            X, [y, aux_y], verbose=False)
-        discriminator_train_loss = np.mean(np.array(epoch_disc_loss), axis=0)
+            noise = np.random.normal(-1, 1, (100, latent_size))
+            sampled_labels = np.array([
+                [i] * 10 for i in range(10)
+            ]).reshape(-1, 1)
 
-        noise = np.random.normal(0, 1, (2 * nb_test, latent_size))
-        sampled_labels = np.random.randint(0, 10, 2 * nb_test)
-        trick = np.ones(2 * nb_test)
+            generated_images = generator.predict(
+                [noise, sampled_labels], verbose=0)
 
-        generator_test_loss = combined.evaluate(
-            [noise, sampled_labels.reshape((-1, 1))],
-            [trick, sampled_labels], verbose=False)
-        generator_train_loss = np.mean(np.array(epoch_gen_loss), axis=0)
+            img = (np.concatenate([r.reshape(-1, 28)
+                                   for r in np.split(generated_images, 10)
+                                   ], axis=-1) * 127.5 + 127.5).astype(np.uint8)
+            Image.fromarray(img).save(
+                'plot_batch_{0:06d}_generated.png'.format(batch))
 
-        train_history['generator'].append(generator_train_loss)
-        train_history['discriminator'].append(discriminator_train_loss)
-        test_history['generator'].append(generator_test_loss)
-        test_history['discriminator'].append(discriminator_test_loss)
+    pickle.dump({'test': test_history}, open('acgan-history.pkl', 'wb'))
 
-        print('{0:<22s} | {1:4s} | {2:15s} | {3:5s}'.format(
-            'component', *discriminator.metrics_names))
-        print('-' * 65)
-        ROW_FMT = '{0:<22s} | {1:<4.2f} | {2:<15.2f} | {3:<5.2f}'
-        print(ROW_FMT.format('generator (train)',
-                             *train_history['generator'][-1]))
-        print(ROW_FMT.format('generator (test)',
-                             *test_history['generator'][-1]))
-        print(ROW_FMT.format('discriminator (train)',
-                             *train_history['discriminator'][-1]))
-        print(ROW_FMT.format('discriminator (test)',
-                             *test_history['discriminator'][-1]))
-        
-        generator.save_weights(
-            'params_generator_epoch_{0:03d}.hdf5'.format(epoch), True)
-        discriminator.save_weights(
-            'params_discriminator_epoch_{0:03d}.hdf5'.format(epoch), True)
-
-        noise = np.random.normal(-1, 1, (100, latent_size))
-        sampled_labels = np.array([[i] * 10 for i in range(10)]).reshape(-1, 1)
-        generated_images = generator.predict(
-            [noise, sampled_labels], verbose=0)
-
-        img = (np.concatenate([r.reshape(-1, 28)
-                               for r in np.split(generated_images, 10)
-                               ], axis=-1) * 127.5 + 127.5).astype(np.uint8)
-        Image.fromarray(img).save(
-            'plot_epoch_{0:03d}_generated.png'.format(epoch))
-
-    pickle.dump({'train': train_history, 'test': test_history},
-                open('acgan-history.pkl', 'wb'))
 
 if __name__ == '__main__':
     train()
