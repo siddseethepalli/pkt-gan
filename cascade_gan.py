@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import keras.backend as K
 from keras.datasets import mnist
-from keras.layers import Input, Dense, Reshape, Flatten, Embedding, merge, average, multiply, Dropout
+from keras.layers import Input, Dense, Reshape, Flatten, Embedding, merge, add, average, maximum, multiply, Dropout
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
 from keras.layers.core import Lambda
@@ -11,6 +11,7 @@ from keras.backend.common import _EPSILON
 from keras.utils.generic_utils import Progbar
 import numpy as np
 from PIL import Image
+import tensorflow as tf
 
 np.random.seed(1331)
 K.set_image_dim_ordering('th')
@@ -136,10 +137,11 @@ def train():
     second_discriminator.trainable = False
     fake_1, aux_1 = first_discriminator(fake)
     fake_2, aux_2 = second_discriminator(fake)
+    mask_1 = Lambda(lambda x: (-x + 1) / 2)(fake_1)
+    mask_2 = Lambda(lambda x: (x + 1) / 2)(fake_1)
+    fake = add([multiply([fake_1, mask_1]),
+                multiply([fake_2, mask_2])])
     aux = average([aux_1, aux_2])
-    fake = Lambda(lambda x: 2 * x - 1)(multiply(
-        [Lambda(lambda x: 0.5 * (x + 1))(fake_1),
-         Lambda(lambda x: 0.5 * (x + 1))(fake_2)]))
     combined = Model(outputs=[fake, aux], inputs=[latent, image_class])
 
     combined.compile(
@@ -189,7 +191,7 @@ def train():
                 [noise, sampled_labels.reshape((-1, 1))], verbose=0)
 
             X = np.concatenate((image_batch, generated_images))
-            y = np.array([-1] * batch_size + [1] * batch_size)
+            y = np.array([1] * batch_size + [-1] * batch_size)
             aux_y = np.concatenate((label_batch, sampled_labels), axis=0)
 
             epoch_disc_1_loss.append(first_discriminator.train_on_batch(X, [y, aux_y]))
@@ -197,19 +199,21 @@ def train():
             fake_predicted_a,_ = first_discriminator.predict_on_batch(image_batch)
             fake_predicted_b,_ = first_discriminator.predict_on_batch(generated_images)
             
-            fake_predicted_a,fake_predicted_b = fake_predicted_a.flatten(),fake_predicted_b.flatten()
+            fake_predicted_a = fake_predicted_a.flatten()
+            fake_predicted_b = fake_predicted_b.flatten()
 
-            mask_a, mask_b = fake_predicted_a>0, 1*fake_predicted_b<0
-            X_wrong = np.concatenate((image_batch[mask_a],generated_images[mask_b]))
-            y_wrong =np.concatenate((np.ones(image_batch[mask_a].shape[0]),-1*np.ones(generated_images[mask_b].shape[0])))
-            aux_y_wrong = np.concatenate((label_batch[mask_a],sampled_labels[mask_b]))
+            mask_a, mask_b = fake_predicted_a < 0, fake_predicted_b >= 0
+            X_wrong = np.concatenate((image_batch[mask_a], generated_images[mask_b]))
+            y_wrong =np.concatenate((np.ones(image_batch[mask_a].shape[0]),
+                                     -np.ones(generated_images[mask_b].shape[0])))
+            aux_y_wrong = np.concatenate((label_batch[mask_a], sampled_labels[mask_b]))
 
             epoch_disc_2_loss.append(
                 second_discriminator.train_on_batch(X_wrong, [y_wrong, aux_y_wrong]))
 
             noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
             sampled_labels = np.random.randint(0, 10, 2 * batch_size)
-            trick = -np.ones(2 * batch_size)
+            trick = np.ones(2 * batch_size)
 
             epoch_gen_loss.append(combined.train_on_batch(
                 [noise, sampled_labels.reshape((-1, 1))], [trick, sampled_labels]))
