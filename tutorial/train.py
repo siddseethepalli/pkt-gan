@@ -152,11 +152,13 @@ def exploit():
         optimizer=SGD(clipvalue=0.01),#Adam(lr=adam_lr, beta_1=adam_beta_1),
         loss=[modified_binary_crossentropy, 'sparse_categorical_crossentropy']
     )
+    discriminator.load_weights('discriminator')
 
     # build the generator
     generator = build_generator(latent_size)
     generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
                       loss='binary_crossentropy')
+    generator.load_weights('generator')
 
     latent = Input(shape=(latent_size, ))
     image_class = Input(shape=(1,), dtype='int32')
@@ -251,13 +253,11 @@ def train():
         optimizer=SGD(clipvalue=0.01),#Adam(lr=adam_lr, beta_1=adam_beta_1),
         loss=[modified_binary_crossentropy, 'sparse_categorical_crossentropy']
     )
-    discriminator.load_weights('discriminator')
 
     # build the generator
     generator = build_generator(latent_size)
     generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
                       loss='binary_crossentropy')
-    generator.load_weights('generator')
 
     latent = Input(shape=(latent_size, ))
     image_class = Input(shape=(1,), dtype='int32')
