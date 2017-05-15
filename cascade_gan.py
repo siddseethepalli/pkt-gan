@@ -198,13 +198,10 @@ def train():
             
             fake_predicted_a,fake_predicted_b = fake_predicted_a.flatten(),fake_predicted_b.flatten()
 
-            print(fake_predicted_b,fake_predicted_a)
-            mask_a, mask_b = fake_predicted_a>=0, fake_predicted_b<=0
-            print(mask_a,mask_b)
-            print(image_batch.shape,generated_images.shape)
-            X_wrong = np.concatenate(image_batch[mask_a,:,:,:],generated_images[mask_b,:,:,:])
-            y_wrong =np.concatenate(np.ones(image_batch[fake_predicted_a >= 0].shape),-1*np.ones(generated_images[fake_predicted_b <= 0].shape))
-            aux_y_wrong = np.concatenate(label_batch[fake_predicted_a >= 0],sampled_labels[fake_predicted_b <= 0])
+            mask_a, mask_b = fake_predicted_a>0, 1*fake_predicted_b<0
+            X_wrong = np.concatenate((image_batch[mask_a],generated_images[mask_b]))
+            y_wrong =np.concatenate((np.ones(image_batch[mask_a].shape[0]),-1*np.ones(generated_images[mask_b].shape[0])))
+            aux_y_wrong = np.concatenate((label_batch[mask_a],sampled_labels[mask_b]))
 
             epoch_disc_2_loss.append(
                 second_discriminator.train_on_batch(X_wrong, [y_wrong, aux_y_wrong]))
