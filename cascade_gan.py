@@ -100,7 +100,7 @@ def build_discriminator():
 def train():
     # batch and latent size taken from the paper
     nb_epochs = 50
-    batch_size = 10
+    batch_size = 100
     latent_size = 100
 
     # Adam parameters suggested in https://arxiv.org/abs/1511.06434
@@ -137,8 +137,9 @@ def train():
     fake_1, aux_1 = first_discriminator(fake)
     fake_2, aux_2 = second_discriminator(fake)
     aux = average([aux_1, aux_2])
-    fake = multiply([Lambda(lambda x: 0.5 * (x + 1))(fake_1),
-                     Lambda(lambda x: 0.5 * (x + 1))(fake_2)])
+    fake = Lambda(lambda x: 2 * x - 1)(multiply(
+        [Lambda(lambda x: 0.5 * (x + 1))(fake_1),
+         Lambda(lambda x: 0.5 * (x + 1))(fake_2)]))
     combined = Model(outputs=[fake, aux], inputs=[latent, image_class])
 
     combined.compile(
