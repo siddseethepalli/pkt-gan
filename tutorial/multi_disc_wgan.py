@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import os
+import sys
 from collections import defaultdict
 try:
     import cPickle as pickle
@@ -151,7 +152,7 @@ def build_super_discriminator(discriminators):
 
     return Model(inputs=image, outputs=[fake, aux])
 
-def train():
+def train(starting_batch):
     # batch and latent size taken from the paper
     nb_batches = 100000
     batch_size = 128
@@ -215,7 +216,7 @@ def train():
     train_history = defaultdict(list)
     test_history = defaultdict(list)
 
-    for batch in range(nb_batches):
+    for batch in range(starting_batch, nb_batches):
         print('Batch {} of {}'.format(batch, nb_batches))
 
         idx = np.random.randint(X_train.shape[0] - batch_size)
@@ -264,4 +265,7 @@ def train():
 
 
 if __name__ == '__main__':
-    train()
+    if len(sys.argv) > 1:
+        train(int(sys.argv[1]))
+    else:
+        train(0)
