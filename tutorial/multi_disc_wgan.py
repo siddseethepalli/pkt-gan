@@ -175,11 +175,15 @@ def train():
     super_discriminator = build_super_discriminator(discriminators)
     super_discriminator.compile(optimizer=SGD(clipvalue=0.01),
             loss=[modified_binary_crossentropy_super, 'sparse_categorical_crossentropy'])
+    if os.path.exists('discriminator.hdf5'):
+        super_discriminator.load_weights('discriminator.hdf5')
 
     # build the generator
     generator = build_generator(latent_size)
     generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
                       loss='binary_crossentropy')
+    if os.path.exists('generator.hdf5'):
+        super_discriminator.load_weights('generator.hdf5')
 
     latent = Input(shape=(latent_size, ))
     image_class = Input(shape=(1,), dtype='int32')
