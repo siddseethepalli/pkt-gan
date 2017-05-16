@@ -184,7 +184,7 @@ def train(starting_batch):
     generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
                       loss='binary_crossentropy')
     if os.path.exists('generator.hdf5'):
-        super_discriminator.load_weights('generator.hdf5')
+        generator.load_weights('generator.hdf5')
 
     latent = Input(shape=(latent_size, ))
     image_class = Input(shape=(1,), dtype='int32')
