@@ -29,6 +29,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 np.random.seed(1331)
 K.set_image_dim_ordering('th')
 
+ALPHA = 0
 NUM_DISCRIMINATORS = 3
 
 def l2norm(a, b):
@@ -42,7 +43,7 @@ def modified_binary_crossentropy_super(target, output):
     for i in range(NUM_DISCRIMINATORS):
         for j in range(i + 1, NUM_DISCRIMINATORS):
             s = Reshape((-1, 1))(output[:, i] - output[:, j])
-            repel_error += 1 / l2norm(s, s)
+            repel_error += ALPHA / l2norm(s, s)
     return K.mean(target*output) + repel_error
 
 def build_generator(latent_size):
