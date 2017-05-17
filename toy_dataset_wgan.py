@@ -42,6 +42,7 @@ TRIAL_NUMBER = int(sys.argv[1])
 
 ALPHA = 1e-3
 NUM_DISCRIMINATORS = 3
+NUM_CLUSTERS = 3
 
 def l2norm(a, b):
     return dot([a, b], 0)
@@ -64,20 +65,24 @@ def build_generator(latent_size):
     # label drawn from P_c, to image space (..., 1, 28, 28)
     cnn = Sequential()
 
-    cnn.add(Activation('relu',input_shape=(latent_size,)))
-    cnn.add(Activation('relu'))
-    cnn.add(Dense(2,activation='linear'))
+    cnn.add(Dense(20, input_shape=(latent_size,)))
+    cnn.add(Activation(K.tanh))
+    cnn.add(Dense(20))
+    cnn.add(Activation(K.tanh))
+    cnn.add(Dense(20))
+    cnn.add(Activation(K.tanh))
+    cnn.add(Dense(2, activation='linear'))
 
 
     # generator.add(BatchNormalization(128))
     # this is the z space commonly refered to in GAN papers
-    latent = Input(shape=(latent_size, ))
+    latent = Input(shape=(latent_size,))
 
     # this will be our label
     image_class = Input(shape=(1,), dtype='int32')
 
     # 10 classes in MNIST
-    cls = Flatten()(Embedding(4, 100, embeddings_initializer="glorot_uniform")(image_class))
+    cls = Flatten()(Embedding(NUM_CLUSTERS, latent_size, embeddings_initializer="glorot_uniform")(image_class))
 
     # hadamard product between z-space and a class conditional embedding
     h = multiply([latent, cls])
@@ -90,9 +95,10 @@ def build_discriminator():
     # build a relatively standard conv net, with LeakyReLUs as suggested in
     # the reference paper
     cnn = Sequential()
-    #cnn.add(GaussianNoise(0.2, input_shape=(1, 28, 28)))
-    cnn.add(Dense(8, activation='linear', input_shape=(1,2)))
-    cnn.add(Activation(K.tanh))
+    cnn.add(Dense(32, input_shape=(1,2)))
+    cnn.add(LeakyReLU())
+    cnn.add(Dense(16))
+    cnn.add(LeakyReLU())
 
     image = Input(shape=(2,))
 
@@ -103,7 +109,7 @@ def build_discriminator():
     # (name=auxiliary) is the class that the discriminator thinks the image
     # belongs to.
     fake = Dense(1, activation='linear', name='generation')(features)
-    aux = Dense(4, activation='softmax', name='auxiliary')(features)
+    aux = Dense(NUM_CLUSTERS, activation='softmax', name='auxiliary')(features)
     print(fake.shape, aux.shape)
     return Model(inputs=image, outputs=[fake, aux])
 
@@ -118,21 +124,7 @@ def build_super_discriminator(discriminators):
         auxes.append(d_aux)
 
     fake = concatenate(fakes)
-    # out = []
-    # for i in range(256):
-    #     out.append(tf.strided_slice(fake,i,2*256+i,256))
-    # fake = tf.stack(out)
     aux = average(auxes)
-    
-    # def l2norm(a, b):
-    #     return Reshape(())(dot([a - b, a - b], 0))
-
-    # diffs = []
-    # for i in range(len(discriminators)):
-    #     for j in range(i + 1, len(discriminators)):
-    #         diffs.append(l2norm(fakes[i], fakes[j]))
-
-    # diff = concatenate(diffs)
 
     return Model(inputs=image, outputs=[fake, aux])
 
@@ -148,9 +140,9 @@ def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
 def train(starting_batch):
     # batch and latent size taken from the paper
     nb_batches = 100000
-    batch_size = 128
+    batch_size = 8192
     epoch_size = 100
-    latent_size = 100 
+    latent_size = 100
 
     # Adam parameters suggested in https://arxiv.org/abs/1511.06434
     adam_lr = 0.0002
@@ -196,27 +188,15 @@ def train(starting_batch):
         loss=[modified_binary_crossentropy_disc,
               'sparse_categorical_crossentropy'])
 
-    # get our mnist data, and force it to be of shape (..., 1, 28, 28) with
-    # range [-1, 1]
-    #(X_train, y_train), (X_test, y_test) = sample()
-    #X_train = (X_train.astype(np.float32) - 127.5) / 127.5
-    #X_train = np.expand_dims(X_train, axis=1)
-
-    #X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-    #X_test = np.expand_dims(X_test, axis=1)
-
-    #nb_train, nb_test = X_train.shape[0], X_test.shape[0]
-
     train_history = defaultdict(list)
     test_history = defaultdict(list)
 
     for batch in range(starting_batch, nb_batches):
         print('Batch {} of {}'.format(batch, nb_batches))
 
-        #idx = np.random.randint(X_train.shape[0] - batch_size)
         image_batch, label_batch = gaussian_mixture_circle(batch_size)
         noise = np.random.normal(0, 1, (batch_size, latent_size))
-        sampled_labels = np.random.randint(0, 3, batch_size)
+        sampled_labels = np.random.randint(0, NUM_CLUSTERS, batch_size)
         generated_images = generator.predict(
             [noise, sampled_labels.reshape((-1, 1))], verbose=0)
 
@@ -227,7 +207,7 @@ def train(starting_batch):
         disc_loss = super_discriminator.train_on_batch(X, [y, aux_y])
 
         noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
-        sampled_labels = np.random.randint(0, 3, 2 * batch_size)
+        sampled_labels = np.random.randint(0, NUM_CLUSTERS, 2 * batch_size)
         trick = -np.ones(2 * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
 
         gen_loss = combined.train_on_batch(
@@ -245,13 +225,13 @@ def train(starting_batch):
                 fig = pylab.gcf()
                 fig.set_size_inches(16.0, 16.0)
                 pylab.clf()
-                pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
                 pylab.scatter(true[:, 0], true[:, 1], s=80, marker="X", edgecolors="none", color='red')
+                pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
                 pylab.xlim(-4, 4)
                 pylab.ylim(-4, 4)
                 pylab.savefig("{}/{}.png".format(dir, filename))
 
-            plot_scatter(generated_images,image_batch,dir='plots',filename='scatter{0}'.format(batch))
+            plot_scatter(generated_images,image_batch,dir='plots',filename='scatter{0:06d}'.format(batch))
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
