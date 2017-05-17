@@ -24,6 +24,7 @@ from keras.layers import *
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
 from keras.layers.noise import GaussianNoise
+from keras.losses import *
 from keras.models import Sequential, Model
 from keras.optimizers import Adam, SGD
 from keras.backend.common import _EPSILON
@@ -35,12 +36,12 @@ import matplotlib.pyplot as plot
 #plot.use('Agg')
 
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
-np.random.seed(1331)
 K.set_image_dim_ordering('th')
 
 TRIAL_NUMBER = int(sys.argv[1])
 
-ALPHA = 1e-3
+ALPHA = 0
+LAMBDA = 0
 NUM_DISCRIMINATORS = 3
 NUM_CLUSTERS = 3
 COLORS = ['r', 'green', 'blue']
@@ -48,18 +49,11 @@ COLORS = ['r', 'green', 'blue']
 def l2norm(a, b):
     return dot([a, b], 0)
 
+def similar_disc_penalty(target, output):
+    return ALPHA * (dot([target, output], axes=0) * dot([target, output], axes=0)) / (dot([target, target], axes=0) * dot([output, output], axes=0))
+
 def modified_binary_crossentropy_disc(target, output):
     return K.mean(target*output)
-
-def modified_binary_crossentropy_super(target, output):
-    repel_error = K.constant(0)
-    for i in range(NUM_DISCRIMINATORS):
-        for j in range(i + 1, NUM_DISCRIMINATORS):
-            s = Reshape((-1, 1))(output[:, i] - output[:, j])
-            #repel_error += ALPHA / l2norm(s, s)
-            #a, b = Reshape((-1, 1))(target[:, i]), Reshape((-1, 1))(output[:, j])
-            #repel_error += ALPHA * (l2norm(a, b)/(l2norm(a, a)*l2norm(b, b)))
-    return K.mean(target*output) #+ repel_error
 
 def build_generator(latent_size):
     # we will map a pair of (z, L), where z is a latent vector and L is a
@@ -92,11 +86,11 @@ def build_generator(latent_size):
 
     return Model(inputs=[latent, image_class], outputs=fake_image)
 
-def build_discriminator():
+def build_discriminator(batch_size):
     # build a relatively standard conv net, with LeakyReLUs as suggested in
     # the reference paper
     cnn = Sequential()
-    cnn.add(Dense(64, input_shape=(1,2)))
+    cnn.add(Dense(64, input_shape=(2,)))
     cnn.add(LeakyReLU())
     cnn.add(Dense(64))
     cnn.add(LeakyReLU())
@@ -111,9 +105,10 @@ def build_discriminator():
     # thinks the image that is being shown is fake, and the second output
     # (name=auxiliary) is the class that the discriminator thinks the image
     # belongs to.
-    fake = Dense(1, activation='linear', name='generation')(features)
+    fake = Dense(1, activation='sigmoid', name='generation')(features)
     aux = Dense(NUM_CLUSTERS, activation='softmax', name='auxiliary')(features)
-    return Model(inputs=image, outputs=[fake, aux])
+
+    return Model(inputs=image, outputs=[fake, aux, fake])
 
 def build_super_discriminator(discriminators):
     image = Input(shape=(2,))
@@ -121,14 +116,20 @@ def build_super_discriminator(discriminators):
     fakes = []
     auxes = []
     for discriminator in discriminators:
-        d_fake, d_aux = discriminator(image)
+        d_fake, d_aux, _ = discriminator(image)
         fakes.append(Reshape((-1,))(d_fake))
         auxes.append(d_aux)
-
-    fake = concatenate(fakes)
+    output = []
+    normalizer = 0
+    for fake in fakes:
+        normalizer += K.sum(Lambda(lambda x: K.exp(tf.scalar_mul(LAMBDA,x)))(fake))
+        temp = Lambda(lambda x: K.exp(tf.scalar_mul(LAMBDA,x)))(fake)
+        fakes = multiply([temp, Reshape((3, -1, 1))(fake)])
+    fakes = Lambda(lambda x: K.sum(x,axis=0)/normalizer)(fakes)
+    print(fakes.shape)
     aux = average(auxes)
 
-    return Model(inputs=image, outputs=[fake, aux])
+    return Model(inputs=image, outputs=[fakes, aux])
 
 def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
     rand_indices = np.random.randint(0, num_cluster, size=batchsize)
@@ -142,8 +143,8 @@ def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
 def train(starting_batch):
     # batch and latent size taken from the paper
     nb_batches = 100000
-    batch_size = 2048
-    epoch_size = 100
+    batch_size = 256
+    epoch_size = 1000
     latent_size = 100
 
     # Adam parameters suggested in https://arxiv.org/abs/1511.06434
@@ -153,16 +154,16 @@ def train(starting_batch):
     # build the super discriminator
     discriminators = []
     for _ in range(NUM_DISCRIMINATORS):
-        discriminator = build_discriminator()
+        discriminator = build_discriminator(batch_size)
         discriminator.compile(
             optimizer=SGD(clipvalue=0.01),#Adam(lr=adam_lr, beta_1=adam_beta_1),
-            loss=[modified_binary_crossentropy_disc, 'sparse_categorical_crossentropy']
+            loss=[modified_binary_crossentropy_disc, 'sparse_categorical_crossentropy', similar_disc_penalty]
         )
         discriminators.append(discriminator)
 
     super_discriminator = build_super_discriminator(discriminators)
     super_discriminator.compile(optimizer=SGD(clipvalue=0.01),
-            loss=[modified_binary_crossentropy_super, 'sparse_categorical_crossentropy'])
+            loss=[modified_binary_crossentropy_disc, 'sparse_categorical_crossentropy'])
     if os.path.exists('discriminator.hdf5'):
         super_discriminator.load_weights('discriminator.hdf5')
 
@@ -173,7 +174,7 @@ def train(starting_batch):
     if os.path.exists('generator.hdf5'):
         generator.load_weights('generator.hdf5')
 
-    latent = Input(shape=(latent_size, ))
+    latent = Input(shape=(latent_size,))
     image_class = Input(shape=(1,), dtype='int32')
 
     # get a fake image
@@ -189,27 +190,44 @@ def train(starting_batch):
         loss=[modified_binary_crossentropy_disc,
               'sparse_categorical_crossentropy'])
 
-    train_history = defaultdict(list)
-    test_history = defaultdict(list)
-
     for batch in range(starting_batch, nb_batches):
         print('Batch {} of {}'.format(batch, nb_batches))
 
         image_batch, label_batch = gaussian_mixture_circle(batch_size)
+        training_ys = np.zeros((NUM_DISCRIMINATORS, batch_size))
+        for i in range(NUM_DISCRIMINATORS):
+            #print([discriminators[i].predict(image_batch)[i].shape for i in range(3)])
+            training_ys[i, :] = discriminators[i].predict(image_batch)[0].flatten()
+
         noise = np.random.normal(0, 1, (batch_size, latent_size))
         sampled_labels = np.random.randint(0, NUM_CLUSTERS, batch_size)
         generated_images = generator.predict(
             [noise, sampled_labels.reshape((-1, 1))], verbose=0)
 
         X = np.concatenate((image_batch, generated_images))
-        y = np.array([-1] * batch_size * NUM_DISCRIMINATORS + [1] * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+        y = np.array([-1] * batch_size + [1] * batch_size)
         aux_y = np.concatenate((label_batch, sampled_labels), axis=0)
 
-        disc_loss = super_discriminator.train_on_batch(X, [y, aux_y])
+        def sdp(a,b):
+            return abs(np.sum(a-b))
+
+
+        #print(training_ys[0, :].shape)
+        #print(y.shape)
+        #print(sdp(training_ys[1,:],training_ys[2,:]))
+        disc_loss = []
+        order_1 = list(range(NUM_DISCRIMINATORS))
+        np.random.shuffle(order_1)
+        order_2 = list(range(NUM_DISCRIMINATORS))
+        np.random.shuffle(order_2)
+        for i in order_1:
+            for j in order_2:
+                if i != j:
+                    disc_loss.append(discriminators[i].train_on_batch(X, [y, aux_y, y]))
 
         noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
         sampled_labels = np.random.randint(0, NUM_CLUSTERS, 2 * batch_size)
-        trick = -np.ones(2 * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+        trick = -np.ones(2 * batch_size)
 
         gen_loss = combined.train_on_batch(
             [noise, sampled_labels.reshape((-1, 1))], [trick, sampled_labels])
@@ -230,16 +248,15 @@ def train(starting_batch):
                 pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
 
                 h = .02  # step size in the mesh
-                # create a mesh to plot in
                 xx, yy = np.meshgrid(np.arange(-4, 4, h),
-                                     np.arange(-4, 4, h))
-                f, _ = super_discriminator.predict(np.c_[xx.ravel(), yy.ravel()])
+                     np.arange(-4, 4, h))
                 for i in range(NUM_DISCRIMINATORS):
-                    Z = f[:, i]
+                    Z, _, _ = discriminators[i].predict(np.c_[xx.ravel(), yy.ravel()])
                     Z = Z.reshape(xx.shape)
                     CS = pylab.contour(xx, yy, Z, 3, colors=COLORS[i])
                     pylab.clabel(CS, fontsize=9, inline=1)
-                Z = np.sum(f, axis=1)
+
+                Z, _ = super_discriminator.predict(np.c_[xx.ravel(), yy.ravel()])
                 Z = Z.reshape(xx.shape)
                 CS = pylab.contour(xx, yy, Z, 3, colors='k')
                 pylab.clabel(CS, fontsize=9, inline=1)
