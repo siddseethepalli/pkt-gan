@@ -43,6 +43,7 @@ TRIAL_NUMBER = int(sys.argv[1])
 ALPHA = 1e-3
 NUM_DISCRIMINATORS = 3
 NUM_CLUSTERS = 3
+COLORS = ['r', 'green', 'blue']
 
 def l2norm(a, b):
     return dot([a, b], 0)
@@ -95,9 +96,11 @@ def build_discriminator():
     # build a relatively standard conv net, with LeakyReLUs as suggested in
     # the reference paper
     cnn = Sequential()
-    cnn.add(Dense(32, input_shape=(1,2)))
+    cnn.add(Dense(64, input_shape=(1,2)))
     cnn.add(LeakyReLU())
-    cnn.add(Dense(16))
+    cnn.add(Dense(64))
+    cnn.add(LeakyReLU())
+    cnn.add(Dense(32))
     cnn.add(LeakyReLU())
 
     image = Input(shape=(2,))
@@ -110,7 +113,6 @@ def build_discriminator():
     # belongs to.
     fake = Dense(1, activation='linear', name='generation')(features)
     aux = Dense(NUM_CLUSTERS, activation='softmax', name='auxiliary')(features)
-    print(fake.shape, aux.shape)
     return Model(inputs=image, outputs=[fake, aux])
 
 def build_super_discriminator(discriminators):
@@ -140,7 +142,7 @@ def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
 def train(starting_batch):
     # batch and latent size taken from the paper
     nb_batches = 100000
-    batch_size = 8192
+    batch_size = 2048
     epoch_size = 100
     latent_size = 100
 
@@ -176,7 +178,6 @@ def train(starting_batch):
 
     # get a fake image
     fake = generator([latent, image_class])
-    print(fake.shape)
 
     # we only want to be able to train generation for the combined model
     super_discriminator.trainable = False
@@ -227,6 +228,22 @@ def train(starting_batch):
                 pylab.clf()
                 pylab.scatter(true[:, 0], true[:, 1], s=80, marker="X", edgecolors="none", color='red')
                 pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
+
+                h = .02  # step size in the mesh
+                # create a mesh to plot in
+                xx, yy = np.meshgrid(np.arange(-4, 4, h),
+                                     np.arange(-4, 4, h))
+                f, _ = super_discriminator.predict(np.c_[xx.ravel(), yy.ravel()])
+                for i in range(NUM_DISCRIMINATORS):
+                    Z = f[:, i]
+                    Z = Z.reshape(xx.shape)
+                    CS = pylab.contour(xx, yy, Z, 3, colors=COLORS[i])
+                    pylab.clabel(CS, fontsize=9, inline=1)
+                Z = np.sum(f, axis=1)
+                Z = Z.reshape(xx.shape)
+                CS = pylab.contour(xx, yy, Z, 3, colors='k')
+                pylab.clabel(CS, fontsize=9, inline=1)
+
                 pylab.xlim(-4, 4)
                 pylab.ylim(-4, 4)
                 pylab.savefig("{}/{}.png".format(dir, filename))
