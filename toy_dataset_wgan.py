@@ -64,10 +64,12 @@ def build_generator(latent_size):
     # label drawn from P_c, to image space (..., 1, 28, 28)
     cnn = Sequential()
 
-    cnn.add(Dense(2,activation='linear',input_shape=(latent_size,)))
+    cnn.add(Activation('relu',input_shape=(latent_size,)))
+    cnn.add(Activation('relu'))
+    cnn.add(Dense(2,activation='linear'))
+
+
     # generator.add(BatchNormalization(128))
-    cnn.add(Activation('tanh'))
-    cnn.add(Activation('tanh'))
     # this is the z space commonly refered to in GAN papers
     latent = Input(shape=(latent_size, ))
 
@@ -134,7 +136,7 @@ def build_super_discriminator(discriminators):
 
     return Model(inputs=image, outputs=[fake, aux])
 
-def gaussian_mixture_circle(batchsize, num_cluster=4, scale=3, std=0.5):
+def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
     rand_indices = np.random.randint(0, num_cluster, size=batchsize)
     base_angle = math.pi * 2 / num_cluster
     angle = rand_indices * base_angle - math.pi / 2
@@ -214,7 +216,7 @@ def train(starting_batch):
         #idx = np.random.randint(X_train.shape[0] - batch_size)
         image_batch, label_batch = gaussian_mixture_circle(batch_size)
         noise = np.random.normal(0, 1, (batch_size, latent_size))
-        sampled_labels = np.random.randint(0, 4, batch_size)
+        sampled_labels = np.random.randint(0, 3, batch_size)
         generated_images = generator.predict(
             [noise, sampled_labels.reshape((-1, 1))], verbose=0)
 
@@ -225,7 +227,7 @@ def train(starting_batch):
         disc_loss = super_discriminator.train_on_batch(X, [y, aux_y])
 
         noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
-        sampled_labels = np.random.randint(0, 4, 2 * batch_size)
+        sampled_labels = np.random.randint(0, 3, 2 * batch_size)
         trick = -np.ones(2 * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
 
         gen_loss = combined.train_on_batch(
