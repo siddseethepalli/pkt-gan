@@ -44,11 +44,11 @@ NUM_DISCRIMINATORS = 3
 def build_generator(latent_size):
 	#Builds the model
 	cnn = Sequential()
-	cnn.add(Dense(50, input_shape=(latent_size,)))
+	cnn.add(Dense(20, input_shape=(latent_size,)))
 	cnn.add(Activation(K.tanh))
-	cnn.add(Dense(25))
+	cnn.add(Dense(20))
 	cnn.add(Activation(K.tanh))
-	cnn.add(Dense(10))
+	cnn.add(Dense(20))
 	cnn.add(Activation(K.tanh))
 	cnn.add(Dense(2, activation='linear'))
 
@@ -71,19 +71,23 @@ def build_generator(latent_size):
 def build_discriminator(number):
 	#Builds the model
 	cnn = Sequential()
-	cnn.add(Dense(128, input_shape=(2,)))
-	cnn.add(Activation('relu'))
-	cnn.add(Dense(64))
+	cnn.add(Dense(256, input_shape=(2,)))
 	cnn.add(LeakyReLU())
-	
+	cnn.add(Dense(128))
+	cnn.add(LeakyReLU())
+	#cnn.add(Dense(128))
+	#cnn.add(LeakyReLU())
+	#cnn.add(Dense(128))
+	#cnn.add(LeakyReLU())
+
 	#Input point (x,y)
 	point = Input(shape=(2,))
 
 	features = cnn(point)
 
 	#Outputs is_fake, aux_class
-	is_fake = Dense(1, activation='sigmoid', name='generation_{0}'.format(number))(features)
-	aux_class = Dense(NUM_CLUSTERS, activation='softmax', name='auxiliary_{0}'.format(number))(features)
+	is_fake = Dense(1, activation='linear', name='generation_{0}'.format(number))(features)
+	aux_class = Dense(NUM_CLUSTERS, activation='sigmoid', name='auxiliary_{0}'.format(number))(features)
 
 	return Model(inputs=point, outputs=[is_fake, aux_class, is_fake])
 
@@ -113,18 +117,29 @@ def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
 
 #LOSSES
 def discriminator_loss(target, output):
-	return -K.mean(target*output)/NUM_DISCRIMINATORS
+	#output = K.clip(output, 0, 1)
+	return K.mean(target*output)
 
 def discriminator_repulsion(target, output):
-	return ALPHA*K.mean(target*output)*K.mean(target*output)/(K.mean(target*target)*K.mean(output*output))
+	#target = K.clip(target, 0, 1)
+	#output = K.clip(output, 0, 1)
+	return ALPHA*K.mean(target*output)*K.mean(target*output)/(K.mean(target*target)*K.mean(output*output)+1)
+
+def superdiscriminator_loss(target, output):
+	output = 2*output-1
+	target = K.clip(target, -1, 1)
+	return -K.mean(target*output)
+
+def single_discriminator_loss(target, output):
+	return K.mean(target-target)
 
 #TRAINING
 def train(TRIAL_NUMBER):
 	print('Training period started.')
 	#batch and latent size taken from the paper
-	nb_epochs = 10
+	nb_epochs = 15
 	batch_size = 512
-	epoch_size = 200
+	epoch_size = 400
 	nb_batches = nb_epochs * epoch_size
 	latent_size = 100
 
@@ -150,7 +165,6 @@ def train(TRIAL_NUMBER):
 	superdiscriminator = build_superdiscriminator(discriminators)
 	superdiscriminator.compile(optimizer=SGD(clipvalue=0.01),
 		   loss=[discriminator_loss, 'sparse_categorical_crossentropy'])
-
 	#get inputs, etc.
 	latent = Input(shape=(latent_size, ))
 	cluster = Input(shape=(1,), dtype='int32')
@@ -165,7 +179,7 @@ def train(TRIAL_NUMBER):
 		optimizer='RMSprop',
 		loss=[discriminator_loss, 'sparse_categorical_crossentropy'])
 
-	for batch in range(0, nb_batches):
+	for batch in range(0, 0):
 		print('Batch {} of {}'.format(batch, nb_batches))
 
 		#idx = np.random.randint(X_train.shape[0] - batch_size)
@@ -174,7 +188,7 @@ def train(TRIAL_NUMBER):
 		sampled_clusters = np.random.randint(0, NUM_CLUSTERS, batch_size)
 		generated_points = generator.predict([noise, sampled_clusters.reshape((-1, 1))], verbose=0)
 		
-		KAPPA = 3 * (nb_batches - batch) / nb_batches + 1
+		KAPPA = 0.5
 
 		X = np.concatenate((point_batch, generated_points))
 		y = np.array([1] * batch_size * NUM_DISCRIMINATORS + [-KAPPA] * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
@@ -202,34 +216,167 @@ def train(TRIAL_NUMBER):
 			for i in range(NUM_DISCRIMINATORS):
 				discriminator.save_weights(
 					'params/toy_params{1}_discriminator_{2}_batch_{0:06d}.hdf5'.format(batch,TRIAL_NUMBER,i), True)
-			
-			def plot_scatter(fake, true, dir=None, filename="scatter",color="blue"):
-				fig = pylab.gcf()
-				fig.set_size_inches(16.0, 16.0)
-				pylab.clf()
-				pylab.scatter(true[:, 0], true[:, 1], s=80, marker="X", edgecolors="none", color='red')
-				pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
 
-				h = .02  # step size in the mesh
-				xx, yy = np.meshgrid(np.arange(-6, 6, h),
-					 np.arange(-6, 6, h))
-				for i in range(NUM_DISCRIMINATORS):
-					Z, _, _ = discriminators[i].predict(np.c_[xx.ravel(), yy.ravel()])
-					Z = Z.reshape(xx.shape)
-					CS = pylab.contour(xx, yy, Z, 3, colors=COLORS[i])
-					pylab.clabel(CS, fontsize=9, inline=1)
+	def plot_scatter(fake, true, dir=None, filename="scatter",color="blue"):
+		fig = pylab.gcf()
+		fig.set_size_inches(16.0, 16.0)
+		pylab.clf()
+		pylab.scatter(true[:, 0], true[:, 1], s=80, marker="X", edgecolors="none", color='red')
+		pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
 
-				Z, _ = superdiscriminator.predict(np.c_[xx.ravel(), yy.ravel()])
-				Z = Z.reshape(xx.shape)
-				CS = pylab.contour(xx, yy, Z, 3, colors='k')
-			   #pylab.clabel(CS, fontsize=9, inline=1)
+		h = .02  # step size in the mesh
+		xx, yy = np.meshgrid(np.arange(-6, 6, h),
+			 np.arange(-6, 6, h))
+		for i in range(NUM_DISCRIMINATORS):
+			Z, _, _ = discriminators[i].predict(np.c_[xx.ravel(), yy.ravel()])
+			Z = Z.reshape(xx.shape)
+			CS = pylab.contour(xx, yy, Z, 3, colors=COLORS[i])
+			pylab.clabel(CS, fontsize=9, inline=1)
 
-				pylab.xlim(-6, 6)
-				pylab.ylim(-6, 6)
-				pylab.savefig("{}/{}/{}.png".format(dir, TRIAL_NUMBER, filename))
+		Z, _ = superdiscriminator.predict(np.c_[xx.ravel(), yy.ravel()])
+		Z = Z.reshape(xx.shape)
+		CS = pylab.contour(xx, yy, Z, 3, colors='k')
+	   #pylab.clabel(CS, fontsize=9, inline=1)
 
-			plot_scatter(generated_points,point_batch,dir='plots',filename='scatter{0:06d}'.format(batch))
+		pylab.xlim(-6, 6)
+		pylab.ylim(-6, 6)
+		pylab.savefig("{}/{}/{}.png".format(dir, TRIAL_NUMBER, filename))
+
+	# plot_scatter(generated_points,point_batch,dir='plots',filename='scatter{0:06d}'.format(batch))
 	
+	single_discriminator = build_discriminator(NUM_DISCRIMINATORS+1)
+	single_discriminator.compile(
+			optimizer=SGD(clipvalue=0.01),
+			loss=[discriminator_loss, 'sparse_categorical_crossentropy', single_discriminator_loss])
+
+	generator = build_generator(latent_size)
+	generator.compile(optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
+					  loss='binary_crossentropy')
+
+	latent = Input(shape=(latent_size, ))
+	cluster = Input(shape=(1,), dtype='int32')
+	point = generator([latent, cluster])
+
+	single_discriminator.trainable = False
+	is_fake, aux_class, _ = single_discriminator(point)
+
+	#build simple combined model
+	combined = Model(inputs=[latent, cluster], outputs=[is_fake, aux_class])
+	combined.compile(
+		optimizer='RMSprop',
+		loss=[discriminator_loss, 'sparse_categorical_crossentropy'])
+
+	for batch in range(nb_batches, nb_batches*2):
+		print('Batch {} of {}'.format(batch, nb_batches*2))
+
+		#idx = np.random.randint(X_train.shape[0] - batch_size)
+		point_batch, cluster_batch = gaussian_mixture_circle(batch_size,num_cluster=NUM_CLUSTERS)
+		noise = np.random.normal(0, 1, (batch_size, latent_size))
+		sampled_clusters = np.random.randint(0, NUM_CLUSTERS, batch_size)
+		generated_points = generator.predict([noise, sampled_clusters.reshape((-1, 1))], verbose=0)
+
+		X = np.concatenate((point_batch, generated_points))
+		y = np.array([-1] * batch_size * NUM_DISCRIMINATORS + [1] * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+		aux_y = np.concatenate((cluster_batch, sampled_clusters), axis=0)
+
+		disc_loss = single_discriminator.train_on_batch(X, [y, aux_y, aux_y])
+
+		noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
+		sampled_clusters = np.random.randint(0, NUM_CLUSTERS, 2 * batch_size)
+		trick = -np.ones(2 * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+
+		gen_loss = combined.train_on_batch([noise, sampled_clusters.reshape((-1, 1))], [trick, sampled_clusters])
+
+		print('full_disc_loss: {} full_gen_loss: {}'.format(disc_loss, gen_loss))
+
+		if batch % epoch_size == epoch_size - 1:
+			generator.save_weights(
+				'params/toy_params{1}_generator_batch_{0:06d}.hdf5'.format(batch,TRIAL_NUMBER), True)
+			for i in range(NUM_DISCRIMINATORS):
+				discriminator.save_weights(
+					'params/toy_params{1}_discriminator_{2}_batch_{0:06d}.hdf5'.format(batch,TRIAL_NUMBER,i), True)
+
+			fake = generated_points
+			true = point_batch
+			dir = 'plots'
+			filename = 'scatter{0:06d}'.format(batch)
+
+			fig = pylab.gcf()
+			fig.set_size_inches(16.0, 16.0)
+			pylab.clf()
+			pylab.scatter(true[:, 0], true[:, 1], s=80, marker="X", edgecolors="none", color='red')
+			pylab.scatter(fake[:, 0], fake[:, 1], s=80, marker="o", edgecolors="none", color='blue')
+
+			h = .02  # step size in the mesh
+			xx, yy = np.meshgrid(np.arange(-6, 6, h),
+				 np.arange(-6, 6, h))
+		
+			Z, _, _ = single_discriminator.predict(np.c_[xx.ravel(), yy.ravel()])
+			Z = Z.reshape(xx.shape)
+			CS = pylab.contour(xx, yy, Z, 3, colors='k')
+
+			pylab.xlim(-6, 6)
+			pylab.ylim(-6, 6)
+			pylab.savefig("{}/{}/{}.png".format(dir, TRIAL_NUMBER, filename))
+
+	superdiscriminator = build_superdiscriminator(discriminators)
+	superdiscriminator.compile(optimizer=SGD(clipvalue=0.01),
+		   loss=[superdiscriminator_loss, 'sparse_categorical_crossentropy'])
+
+	#get inputs, etc.
+	latent = Input(shape=(latent_size, ))
+	cluster = Input(shape=(1,), dtype='int32')
+	point = generator([latent, cluster])
+
+	superdiscriminator.trainable = False
+	is_fake, aux_class = superdiscriminator(point)
+
+	#build simple combined model
+	combined = Model(inputs=[latent, cluster], outputs=[is_fake, aux_class])
+	combined.compile(
+		optimizer='RMSprop',
+		loss=[superdiscriminator_loss, 'sparse_categorical_crossentropy'])
+
+	for batch in range(nb_batches*2, nb_batches*3):
+		print('Batch {} of {}'.format(batch, nb_batches*3))
+
+		#idx = np.random.randint(X_train.shape[0] - batch_size)
+		point_batch, cluster_batch = gaussian_mixture_circle(batch_size,num_cluster=NUM_CLUSTERS)
+		noise = np.random.normal(0, 1, (batch_size, latent_size))
+		sampled_clusters = np.random.randint(0, NUM_CLUSTERS, batch_size)
+		generated_points = generator.predict([noise, sampled_clusters.reshape((-1, 1))], verbose=0)
+		
+		KAPPA = 1
+
+		X = np.concatenate((point_batch, generated_points))
+		y = np.array([-1] * batch_size * NUM_DISCRIMINATORS + [KAPPA] * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+		aux_y = np.concatenate((cluster_batch, sampled_clusters), axis=0)
+
+		disc_loss = []
+		for i in range(NUM_DISCRIMINATORS):
+			for j in range(NUM_DISCRIMINATORS):
+				if i != j:
+					guess, _, _ = discriminators[j].predict_on_batch(X)
+					disc_loss.append(discriminators[i].train_on_batch(X, [y, aux_y, guess]))
+
+		noise = np.random.normal(0, 1, (2 * batch_size, latent_size))
+		sampled_clusters = np.random.randint(0, NUM_CLUSTERS, 2 * batch_size)
+		trick = -np.ones(2 * batch_size * NUM_DISCRIMINATORS).reshape((2 * batch_size, NUM_DISCRIMINATORS))
+
+		gen_loss = combined.train_on_batch([noise, sampled_clusters.reshape((-1, 1))], [trick, sampled_clusters])
+
+		print('full_disc_loss: {} full_gen_loss: {}'.format(disc_loss, gen_loss))
+		print('disc_loss: {} gen_loss: {}'.format(sum([i[0] for i in disc_loss]), gen_loss[0]))
+
+		if batch % epoch_size == epoch_size - 1:
+			generator.save_weights(
+				'params/toy_params{1}_generator_batch_{0:06d}.hdf5'.format(batch,TRIAL_NUMBER), True)
+			for i in range(NUM_DISCRIMINATORS):
+				discriminator.save_weights(
+					'params/toy_params{1}_discriminator_{2}_batch_{0:06d}.hdf5'.format(batch,TRIAL_NUMBER,i), True)
+		
+			plot_scatter(generated_points,point_batch,dir='plots',filename='scatter{0:06d}'.format(batch))
+
 if __name__ == '__main__':
 	if len(sys.argv) > 1:
 		train(int(sys.argv[1]))
