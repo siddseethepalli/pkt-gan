@@ -20,13 +20,13 @@ COLORS = ['r', 'g', 'b', 'c', 'm', 'y', 'k']
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 ALPHA = 100
-NUM_CLUSTERS = 3
+NUM_CLUSTERS = 12
 NUM_DISCRIMINATORS = 1
 
 def discriminator_loss(target, output):
-    return -K.mean(target*output)
+    return K.mean(target*output)
 
-def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
+def gaussian_mixture_circle(batchsize, num_cluster=NUM_CLUSTERS, scale=3, std=0.2):
     rand_indices = np.random.randint(0, num_cluster, size=batchsize)
     base_angle = math.pi * 2 / num_cluster
     angle = rand_indices * base_angle - math.pi / 2
@@ -37,12 +37,10 @@ def gaussian_mixture_circle(batchsize, num_cluster=3, scale=3, std=0.5):
 
 def build_discriminator(number=0):
     cnn = Sequential()
-    cnn.add(Dense(256, input_shape=(2,)))
-    cnn.add(LeakyReLU())
-    cnn.add(Dense(128, input_shape=(2,)))
-    cnn.add(LeakyReLU())
-    cnn.add(Dense(128, input_shape=(2,)))
-    cnn.add(LeakyReLU())
+    cnn.add(Dense(256, activation='tanh', input_shape=(2,)))
+    cnn.add(Dense(128, activation='tanh'))
+    cnn.add(Dense(64, activation='tanh'))
+    cnn.add(Dense(32, activation='tanh'))
 
     point = Input(shape=(2,))
     features = cnn(point)
@@ -61,11 +59,11 @@ def train(TRIAL_NUMBER):
     discriminator.compile(optimizer=SGD(clipvalue=0.01),loss=[discriminator_loss])
 
     for batch in range(nb_batches):    
-        fake_points = np.random.uniform(-4, 4, (batchsize, 2))
+        fake_points = np.random.uniform(-6, 6, (batchsize, 2))
         real_points = gaussian_mixture_circle(batchsize)       
 
         X = np.concatenate((fake_points,real_points))
-        y = np.array([1] * batchsize + [-0.5] * batchsize)
+        y = np.array([1] * batchsize + [-1] * batchsize)
 
         disc_loss = discriminator.train_on_batch(X, y)
 
@@ -84,14 +82,14 @@ def train(TRIAL_NUMBER):
                               edgecolors="none", color='blue')
 
                 h = .05  # step size in the mesh
-                xx, yy = np.meshgrid(np.arange(-6, 6, h), np.arange(-6, 6, h))
+                xx, yy = np.meshgrid(np.arange(-8, 8, h), np.arange(-8, 8, h))
                 Z = discriminator.predict(np.c_[xx.ravel(), yy.ravel()])
                 Z = Z.reshape(xx.shape)
-                CS = pylab.contour(xx, yy, Z, 3, colors='k')
+                CS = pylab.contour(xx, yy, Z, 21, colors='k')
                 pylab.clabel(CS, fontsize=9, inline=1)
 
-                pylab.xlim(-5, 5)
-                pylab.ylim(-5, 5)
+                pylab.xlim(-8, 8)
+                pylab.ylim(-8, 8)
                 pylab.savefig("{}/{}/{}.png".format(
                     dir, TRIAL_NUMBER, filename))
 
